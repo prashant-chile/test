@@ -1,7 +1,8 @@
 ---
 - name: Update web servers
-  hosts: webservers
-  remote_user: root
+  hosts: all
+  become: yes
+  gather_facts: yes
 
   tasks:
   - name: Ensure apache is at the latest version

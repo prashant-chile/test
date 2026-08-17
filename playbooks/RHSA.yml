@@ -2,23 +2,91 @@
 - name: Apply RHSA Security Updates
   hosts: all
   become: true
-  gather_facts: true
+  gather_facts: false
 
   vars:
-    rhsa_list: "{{ rhsa_advisories.split(',') }}"
+    rhsa_list: "{{ rhsa_advisories.split(',') | map('trim') | list }}"
 
   tasks:
 
-    - name: Apply selected RHSA advisories
+    # ---------------------------------------------------------
+    # 1. Validate each RHSA
+    # ---------------------------------------------------------
+    - name: Check RHSA advisory
+      ansible.builtin.command:
+        cmd: "dnf updateinfo info {{ item }}"
+      loop: "{{ rhsa_list }}"
+      register: rhsa_check
+      changed_when: false
+      failed_when: false
+
+    # ---------------------------------------------------------
+    # 2. Create valid RHSA list
+    # ---------------------------------------------------------
+    - name: Build valid RHSA list
+      ansible.builtin.set_fact:
+        valid_rhsa: "{{ valid_rhsa | default([]) + [item.item] }}"
+      loop: "{{ rhsa_check.results }}"
+      when:
+        - item.stdout is defined
+        - item.item in item.stdout
+
+    # ---------------------------------------------------------
+    # 3. Create invalid RHSA list
+    # ---------------------------------------------------------
+    - name: Build invalid RHSA list
+      ansible.builtin.set_fact:
+        invalid_rhsa: "{{ invalid_rhsa | default([]) + [item.item] }}"
+      loop: "{{ rhsa_check.results }}"
+      when:
+        - item.stdout is not defined or item.item not in item.stdout
+
+    # ---------------------------------------------------------
+    # 4. Display invalid RHSA
+    # ---------------------------------------------------------
+    - name: Display invalid RHSA advisories
+      ansible.builtin.debug:
+        msg: "ERROR: RHSA {{ item }} was not found in the enabled repositories."
+      loop: "{{ invalid_rhsa | default([]) }}"
+      when:
+        - invalid_rhsa is defined
+        - invalid_rhsa | length > 0
+
+    # ---------------------------------------------------------
+    # 5. Install only valid RHSA advisories
+    # ---------------------------------------------------------
+    - name: Install valid RHSA advisories
       ansible.builtin.command:
         cmd: >-
           dnf update -y
-          {% for rhsa in rhsa_list %}
-          --advisory {{ rhsa | trim }}
+          {% for rhsa in valid_rhsa %}
+          --advisory {{ rhsa }}
           {% endfor %}
       register: rhsa_update
-      changed_when: rhsa_update.rc == 0
+      when:
+        - valid_rhsa is defined
+        - valid_rhsa | length > 0
 
+    # ---------------------------------------------------------
+    # 6. Display DNF update output
+    # ---------------------------------------------------------
     - name: Display RHSA update output
       ansible.builtin.debug:
         var: rhsa_update.stdout_lines
+      when:
+        - rhsa_update is defined
+        - rhsa_update.stdout_lines is defined
+
+    # ---------------------------------------------------------
+    # 7. Final summary
+    # ---------------------------------------------------------
+    - name: RHSA installation summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "           RHSA INSTALL SUMMARY"
+          - "=========================================="
+          - "Requested RHSA : {{ rhsa_list | join(', ') }}"
+          - "Valid RHSA     : {{ valid_rhsa | default([]) | join(', ') if (valid_rhsa | default([]) | length > 0) else 'None' }}"
+          - "Invalid RHSA   : {{ invalid_rhsa | default([]) | join(', ') if (invalid_rhsa | default([]) | length > 0) else 'None' }}"
+          - "=========================================="

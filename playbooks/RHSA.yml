@@ -1,0 +1,24 @@
+---
+- name: Apply RHSA Security Updates
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    rhsa_list: "{{ rhsa_advisories.split(',') }}"
+
+  tasks:
+
+    - name: Apply selected RHSA advisories
+      ansible.builtin.command:
+        cmd: >-
+          dnf update -y
+          {% for rhsa in rhsa_list %}
+          --advisory {{ rhsa | trim }}
+          {% endfor %}
+      register: rhsa_update
+      changed_when: rhsa_update.rc == 0
+
+    - name: Display RHSA update output
+      ansible.builtin.debug:
+        var: rhsa_update.stdout_lines
